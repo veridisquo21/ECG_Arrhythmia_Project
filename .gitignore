@@ -1,0 +1,9 @@
+# Sanal ortamı yükleme
+venv/
+
+# İndirilen büyük veri dosyalarını yükleme
+data/
+
+# Python derleme dosyaları
+__pycache__/
+*.pyc
