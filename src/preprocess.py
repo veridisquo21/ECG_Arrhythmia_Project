@@ -2,25 +2,37 @@ import numpy as np
 from scipy import signal
 import matplotlib.pyplot as plt
 
-def butter_highpass(cutoff, fs, order=5):
-    """High pass filter katsayılarını hesapladığımız fonksiyon."""
+def apply_filters(data, fs=360):
+    """
+    EKG sinyaline sırasıyla High-pass, Notch ve Low-pass filtre uygular.
+    fs=360: MIT-BIH veri setinin standart örnekleme frekansıdır.
+    """
+    # 1. Baseline Wander Giderme (High-pass: 0.5 Hz)
+    # Nefes alıp verme gibi düşük frekanslı kaymaları temizler.
     nyq = 0.5 * fs
-    normal_cutoff = cutoff / nyq
-    b, a = signal.butter(order, normal_cutoff, btype='high', analog=False)
-    return b, a
+    b_high, a_high = signal.butter(3, 0.5 / nyq, btype='high')
+    data_filtered = signal.filtfilt(b_high, a_high, data)
 
-def filter_baseline_wander(data, fs, cutoff=0.5):
-    """0.5 Hz altındaki düşük frekanslı kaymaları temizlemek için fonksiyon."""
-    b, a = butter_highpass(cutoff, fs, order=3)
-    filtered_data = signal.filtfilt(b, a, data)
-    return filtered_data
+    # 2. Şebeke Gürültüsü Giderme (Notch: 50 Hz)
+    # Türkiye'deki şehir şebekesinin 50Hz frekansını keser.
+    b_notch, a_notch = signal.iirnotch(50.0 / nyq, 30.0)
+    data_filtered = signal.filtfilt(b_notch, a_notch, data_filtered)
 
-# Test için görselleştirme (Opsiyonel)
-def plot_comparison(original, filtered):
-    plt.figure(figsize=(12, 6))
-    plt.plot(original[:2000], label='Input Sinyal', alpha=0.5)
-    plt.plot(filtered[:2000], label='Filtrelenmiş Sinyal (High-pass 0.5Hz)', color='red')
-    plt.title('Baseline Wander Temizleme Sonucu')
+    # 3. Yüksek Frekans Gürültüsü Giderme (Low-pass: 45 Hz)
+    # Kas titremeleri (EMG) ve cihaz gürültülerini temizler.
+    b_low, a_low = signal.butter(4, 45.0 / nyq, btype='low')
+    data_filtered = signal.filtfilt(b_low, a_low, data_filtered)
+
+    return data_filtered
+
+def plot_results(original, filtered, title="EKG Filtreleme Sonucu"):
+    """Sonuçları karşılaştırmalı olarak çizer."""
+    plt.figure(figsize=(15, 5))
+    plt.plot(original[:1500], label='Ham Sinyal', color='gray', alpha=0.5)
+    plt.plot(filtered[:1500], label='Temizlenmiş Sinyal', color='blue')
+    plt.title(title)
+    plt.xlabel('Örnek Sayısı (n)')
+    plt.ylabel('Genlik (mV)')
     plt.legend()
     plt.grid(True)
     plt.show()
