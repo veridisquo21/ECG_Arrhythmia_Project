@@ -1,38 +1,63 @@
 import numpy as np
-from scipy import signal
-import matplotlib.pyplot as plt
+from scipy.signal import butter, lfilter, iirnotch, find_peaks
 
-def apply_filters(data, fs=360):
+def apply_filters(signal, fs):
     """
-    EKG sinyaline sırasıyla High-pass, Notch ve Low-pass filtre uygular.
-    fs=360: MIT-BIH veri setinin standart örnekleme frekansıdır.
+    EKG sinyaline High-pass, Low-pass ve Notch filtre uygular.
     """
-    # 1. Baseline Wander Giderme (High-pass: 0.5 Hz)
-    # Nefes alıp verme gibi düşük frekanslı kaymaları temizler.
+    # 1. High-pass Filter (0.5 Hz) - Baseline kaymasını engeller
     nyq = 0.5 * fs
-    b_high, a_high = signal.butter(3, 0.5 / nyq, btype='high')
-    data_filtered = signal.filtfilt(b_high, a_high, data)
+    low = 0.5 / nyq
+    b, a = butter(1, low, btype='high')
+    signal = lfilter(b, a, signal)
 
-    # 2. Şebeke Gürültüsü Giderme (Notch: 50 Hz)
-    # Türkiye'deki şehir şebekesinin 50Hz frekansını keser.
-    b_notch, a_notch = signal.iirnotch(50.0 / nyq, 30.0)
-    data_filtered = signal.filtfilt(b_notch, a_notch, data_filtered)
+    # 2. Low-pass Filter (40 Hz) - Kas gürültüsünü engeller
+    high = 40 / nyq
+    b, a = butter(4, high, btype='low')
+    signal = lfilter(b, a, signal)
 
-    # 3. Yüksek Frekans Gürültüsü Giderme (Low-pass: 45 Hz)
-    # Kas titremeleri (EMG) ve cihaz gürültülerini temizler.
-    b_low, a_low = signal.butter(4, 45.0 / nyq, btype='low')
-    data_filtered = signal.filtfilt(b_low, a_low, data_filtered)
+    # 3. Notch Filter (50 Hz) - Şebeke gürültüsünü engeller
+    q = 30.0
+    freq = 50.0
+    b, a = iirnotch(freq, q, fs)
+    signal = lfilter(b, a, signal)
 
-    return data_filtered
+    return signal
 
-def plot_results(original, filtered, title="EKG Filtreleme Sonucu"):
-    """Sonuçları karşılaştırmalı olarak çizer."""
-    plt.figure(figsize=(15, 5))
-    plt.plot(original[:1500], label='Ham Sinyal', color='gray', alpha=0.5)
-    plt.plot(filtered[:1500], label='Temizlenmiş Sinyal', color='blue')
-    plt.title(title)
-    plt.xlabel('Örnek Sayısı (n)')
-    plt.ylabel('Genlik (mV)')
-    plt.legend()
-    plt.grid(True)
-    plt.show()
+def detect_r_peaks(filtered_signal, fs):
+    """
+    Filtrelenmiş sinyaldeki R tepelerini tespit eder.
+    """
+    # Mesafe ve yükseklik parametreleri record 100 için optimize edilmiştir
+    distance = int(0.6 * fs) 
+    height = np.mean(filtered_signal) + 0.5 * np.std(filtered_signal)
+    
+    peaks, _ = find_peaks(filtered_signal, distance=distance, height=height)
+    return peaks
+
+def segment_beats(signal, peaks, window_size=150):
+    """
+    R tepelerini merkez alarak sinyali küçük parçalara (segmentlere) böler.
+    window_size: Tepenin sağından ve solundan kaç örnek alınacağı.
+    """
+    beats = []
+    for peak in peaks:
+        start = peak - window_size
+        end = peak + window_size
+        
+        # Sinyal sınırlarını kontrol et
+        if start > 0 and end < len(signal):
+            beat = signal[start:end]
+            beats.append(beat)
+            
+    return np.array(beats)
+
+def normalize_beat(beat):
+    """
+    Sinyali [0, 1] arasına çeker (Min-Max Scaling).
+    """
+    minimum = np.min(beat)
+    maximum = np.max(beat)
+    if maximum - minimum == 0:
+        return beat
+    return (beat - minimum) / (maximum - minimum)
