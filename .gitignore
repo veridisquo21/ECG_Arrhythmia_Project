@@ -1,5 +1,9 @@
 # Sanal ortamı yükleme
 venv/
+.venv/
+.idea/
+.vscode/
+.DS_Store
 
 # İndirilen büyük veri dosyalarını yükleme
 data/
@@ -7,3 +11,6 @@ data/
 # Python derleme dosyaları
 __pycache__/
 *.pyc
+
+# Locally generated case logs
+Vaka_Kayitlari.csv

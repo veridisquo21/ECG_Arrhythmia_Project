@@ -1,8 +1,19 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import os
-from src.data_loader import load_mit_bih_record, load_annotations
-from src.preprocess import apply_filters, detect_r_peaks, segment_beats
+from src.data_loader import (
+    AAMI_CLASSES,
+    load_mit_bih_record,
+    load_annotations,
+    select_signal_channel,
+)
+from src.preprocess import (
+    apply_filters,
+    calculate_bpm,
+    detect_r_peaks,
+    peak_detection_metrics,
+    segment_beats,
+)
 
 def main():
     # 1. Veri Yolu Ayarı (Dosya yolunun doğruluğunu kontrol et)
@@ -16,8 +27,11 @@ def main():
     print("Veriler yükleniyor...")
     signal, fields = load_mit_bih_record(record_path)
     ann_samples, ann_symbols = load_annotations(record_path)
+    reference_samples = np.asarray(
+        [sample for sample, symbol in zip(ann_samples, ann_symbols) if symbol in AAMI_CLASSES]
+    )
     
-    raw_signal = signal[:, 0]  # MLII Kanalı
+    raw_signal = select_signal_channel(signal, fields["sig_name"])
     fs = fields['fs']          # 360 Hz
     
     # 3. Sinyal İşleme (Filtreleme)
@@ -29,11 +43,13 @@ def main():
     peaks = detect_r_peaks(filtered_signal, fs)
     
     # BPM Hesaplama
-    rr_intervals = np.diff(peaks) / fs
-    bpm = 60 / np.mean(rr_intervals)
+    bpm = calculate_bpm(peaks, fs)
+    metrics = peak_detection_metrics(peaks, reference_samples, fs)
     print(f"--- ANALİZ SONUCU ---")
-    print(f"Tespit Edilen Kalp Atış Hızı: {bpm:.2f} BPM")
-    print(f"Toplam Dilimlenen Atış Sayısı: {len(peaks)}")
+    print(f"Tespit Edilen Kalp Atış Hızı: {bpm:.2f} BPM" if bpm else "BPM: yeterli R tepesi yok")
+    print(f"Tespit Edilen R Tepesi Sayısı: {len(peaks)}")
+    print(f"R-peak sensitivity: {metrics['sensitivity']:.3f}")
+    print(f"R-peak PPV: {metrics['ppv']:.3f}")
     print(f"----------------------")
 
     # 5. Segmentasyon (Yapay Zeka İçin Atışları Dilimle)
@@ -52,7 +68,8 @@ def main():
     visible_peaks = peaks[peaks < plot_range]
     plt.plot(visible_peaks, filtered_signal[visible_peaks], "ro", label='Tespit Edilen R Tepeleri')
     
-    plt.title(f'EKG Sinyal İşleme ve R-Peak Tespiti (BPM: {bpm:.1f})')
+    bpm_title = f"{bpm:.1f}" if bpm else "N/A"
+    plt.title(f'EKG Sinyal İşleme ve R-Peak Tespiti (BPM: {bpm_title})')
     plt.ylabel('Genlik')
     plt.legend()
     plt.grid(True, alpha=0.3)

@@ -1,5 +1,4 @@
 import wfdb
-import os
 
 def load_mit_bih_record(record_path):
     """
@@ -20,11 +19,22 @@ def load_annotations(record_path):
     # symbols: Her bir etiketin türü (N, V, A, L, R vb.)
     return annotation.sample, annotation.symbol
 
+
+def select_signal_channel(signal, signal_names, preferred=("MLII", "II", "V5")):
+    """Select a consistent ECG lead, falling back to the first available lead."""
+    for name in preferred:
+        if name in signal_names:
+            return signal[:, signal_names.index(name)]
+    return signal[:, 0]
+
 # AAMI Sınıflandırma Sözlüğü
 AAMI_CLASSES = {
     'N': 0, 'L': 0, 'R': 0, 'e': 0, 'j': 0,      # N: Normal
     'A': 1, 'a': 1, 'S': 1, 'J': 1,              # S: Supraventricular
     'V': 2, 'E': 2,                              # V: Ventricular
     'F': 3,                                      # F: Fusion
-    '/': 4, 'f': 4, 'Q': 4                       # Q: Unknown / Paced
 }
+
+# Standard inter-patient AAMI experiments commonly exclude paced records.
+EXCLUDED_RECORDS = frozenset({"102", "104", "107", "217"})
+CLASS_NAMES = ("Normal", "Supraventricular", "Ventricular", "Fusion")

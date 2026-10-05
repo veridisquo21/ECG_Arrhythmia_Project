@@ -1,0 +1,8 @@
+numpy
+scipy
+matplotlib
+seaborn
+tensorflow
+scikit-learn
+wfdb
+pytest
