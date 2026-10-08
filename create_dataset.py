@@ -10,6 +10,7 @@ from src.data_loader import (
     EXCLUDED_RECORDS,
     load_annotations,
     load_mit_bih_record,
+    patient_group,
     select_signal_channel,
 )
 from src.preprocess import apply_filters
@@ -30,7 +31,7 @@ def create_dataset(data_dir=DATA_DIR, output=OUTPUT):
             f"No MIT-BIH records found in {data_dir}. Run download_data.py first."
         )
 
-    beats, labels, record_ids, rr_features = [], [], [], []
+    beats, labels, record_ids, group_ids, rr_features = [], [], [], [], []
     annotation_samples, annotation_symbols, lead_names, sampling_rates = [], [], [], []
     failures = []
     for record_id in records:
@@ -53,6 +54,7 @@ def create_dataset(data_dir=DATA_DIR, output=OUTPUT):
                     beats.append(filtered[start:end])
                     labels.append(label)
                     record_ids.append(record_id)
+                    group_ids.append(patient_group(record_id))
                     annotation_samples.append(int(sample))
                     annotation_symbols.append(symbol)
                     lead_names.append(lead_name)
@@ -63,10 +65,15 @@ def create_dataset(data_dir=DATA_DIR, output=OUTPUT):
                         if index + 1 < len(samples)
                         else previous
                     )
-                    local = np.median(
-                        np.diff(samples[max(0, index - 2): min(len(samples), index + 3)])
-                    ) / fields["fs"] if index > 0 else following
-                    rr_features.append([previous, following, local])
+                    context_start = max(0, index - 10)
+                    context_end = min(len(samples), index + 11)
+                    context_rr = np.diff(samples[context_start:context_end]) / fields["fs"]
+                    context_rr = context_rr[context_rr > 0]
+                    local = float(np.median(context_rr)) if len(context_rr) else following
+                    baseline = max(local, 1e-6)
+                    rr_features.append(
+                        [previous / baseline, following / baseline, previous / max(following, 1e-6)]
+                    )
         except (OSError, ValueError, RuntimeError) as error:
             failures.append(f"{record_id}: {error}")
 
@@ -78,6 +85,7 @@ def create_dataset(data_dir=DATA_DIR, output=OUTPUT):
         X=np.asarray(beats, dtype=np.float32),
         y=np.asarray(labels, dtype=np.int64),
         record_ids=np.asarray(record_ids),
+        group_ids=np.asarray(group_ids),
         annotation_samples=np.asarray(annotation_samples, dtype=np.int64),
         annotation_symbols=np.asarray(annotation_symbols),
         lead_names=np.asarray(lead_names),
@@ -87,7 +95,7 @@ def create_dataset(data_dir=DATA_DIR, output=OUTPUT):
         dataset_version="1.0",
         filter_lowcut=0.5,
         filter_highcut=40.0,
-        sampling_note="Beat-level RR features are seconds; excluded paced records are documented in src.data_loader.",
+        sampling_note="RR features are local-median ratios; training-only z-score statistics are stored in model metadata.",
     )
     print(f"Created {len(beats)} beats from {len(records)} records.")
     print("Class counts:", dict(zip(*np.unique(labels, return_counts=True))))

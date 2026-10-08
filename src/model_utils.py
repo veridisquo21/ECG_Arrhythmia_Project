@@ -29,4 +29,9 @@ def predict_beats(model, beats, rr_features, metadata=None):
     rr_features = np.asarray(rr_features, dtype="float32")
     if rr_features.ndim == 1:
         rr_features = rr_features.reshape(1, -1)
+    if metadata and metadata.get("rr_normalization"):
+        rr_norm = metadata["rr_normalization"]
+        rr_features = (rr_features - np.asarray(rr_norm["mean"])) / np.asarray(
+            rr_norm["std"]
+        )
     return model.predict({"beat": beats, "rr_features": rr_features}, verbose=0)

@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 import tensorflow as tf
 from sklearn.model_selection import GroupShuffleSplit
+from sklearn.metrics import f1_score
 from tensorflow.keras import callbacks, layers, models
 
 
@@ -13,6 +14,7 @@ DATASET = Path("data/processed_dataset.npz")
 MODEL_PATH = Path("models/ecg_model.keras")
 SPLIT_PATH = Path("data/dataset_split.npz")
 SEED = 42
+IMBALANCE_STRATEGY = "focal_only"
 
 
 def focal_loss(alpha, gamma=2.0):
@@ -68,20 +70,26 @@ def validate_splits(y, groups, splits):
             print(f"Warning: {name} split has no samples for classes {missing}.")
 
 
-def augment_training_data(X, rr, y):
-    rng = np.random.default_rng(SEED)
-    counts = np.bincount(y, minlength=int(y.max()) + 1)
-    target = max(counts.max(), 1)
-    extra_X, extra_rr, extra_y = [X], [rr], [y]
-    for cls, count in enumerate(counts):
-        if count == 0:
-            continue
-        amount = max(0, int(target - count))
-        selected = rng.choice(np.flatnonzero(y == cls), amount, replace=True)
-        extra_X.append(X[selected] + rng.normal(0, 0.01, X[selected].shape))
-        extra_rr.append(rr[selected])
-        extra_y.append(np.full(amount, cls, dtype=y.dtype))
-    return np.concatenate(extra_X), np.concatenate(extra_rr), np.concatenate(extra_y)
+class ValidationMacroF1(callbacks.Callback):
+    def __init__(self, validation_inputs, validation_labels):
+        super().__init__()
+        self.validation_inputs = validation_inputs
+        self.validation_labels = validation_labels
+
+    def on_epoch_end(self, epoch, logs=None):
+        if logs is None:
+            logs = {}
+        probabilities = self.model.predict(self.validation_inputs, verbose=0)
+        predictions = np.argmax(probabilities, axis=1)
+        score = f1_score(
+            self.validation_labels,
+            predictions,
+            labels=np.arange(probabilities.shape[1]),
+            average="macro",
+            zero_division=0,
+        )
+        logs["val_macro_f1"] = float(score)
+        print(f" - val_macro_f1: {score:.4f}")
 
 
 def train():
@@ -93,17 +101,31 @@ def train():
     X = data["X"].astype("float32")
     rr = data["rr_features"].astype("float32")
     y = data["y"].astype("int64")
-    groups = data["record_ids"].astype(str)
+    groups = data["group_ids"].astype(str) if "group_ids" in data else data["record_ids"].astype(str)
     n_classes = len(data["class_names"])
     splits = grouped_splits(y, groups)
     validate_splits(y, groups, splits)
-    np.savez_compressed(SPLIT_PATH, train=splits[0], validation=splits[1], test=splits[2])
+    np.savez_compressed(
+        SPLIT_PATH,
+        train=splits[0],
+        validation=splits[1],
+        test=splits[2],
+        train_records=np.unique(data["record_ids"][splits[0]]),
+        validation_records=np.unique(data["record_ids"][splits[1]]),
+        test_records=np.unique(data["record_ids"][splits[2]]),
+        train_groups=np.unique(groups[splits[0]]),
+        validation_groups=np.unique(groups[splits[1]]),
+        test_groups=np.unique(groups[splits[2]]),
+    )
     mean = float(X[splits[0]].mean())
     std = float(X[splits[0]].std())
     if std <= 0:
         raise ValueError("Training beats have zero variance; cannot standardize the dataset.")
     X = ((X - mean) / std)[..., None]
-    X_train, rr_train, y_train = augment_training_data(X[splits[0]], rr[splits[0]], y[splits[0]])
+    rr_mean = rr[splits[0]].mean(axis=0)
+    rr_std = np.maximum(rr[splits[0]].std(axis=0), 1e-6)
+    rr = (rr - rr_mean) / rr_std
+    X_train, rr_train, y_train = X[splits[0]], rr[splits[0]], y[splits[0]]
     counts = np.maximum(np.bincount(y_train, minlength=n_classes).astype("float32"), 1)
     alpha = counts.sum() / (n_classes * counts)
     alpha = (alpha / alpha.mean()).tolist()
@@ -124,8 +146,16 @@ def train():
         epochs=100,
         batch_size=32,
         callbacks=[
-            callbacks.EarlyStopping(monitor="val_loss", patience=15, restore_best_weights=True),
-            callbacks.ModelCheckpoint(MODEL_PATH, monitor="val_loss", save_best_only=True),
+            ValidationMacroF1(
+                {"beat": X[splits[1]], "rr_features": rr[splits[1]]}, y[splits[1]]
+            ),
+            callbacks.EarlyStopping(
+                monitor="val_macro_f1", mode="max", patience=10, restore_best_weights=True
+            ),
+            callbacks.ModelCheckpoint(
+                MODEL_PATH, monitor="val_macro_f1", mode="max", save_best_only=True
+            ),
+            callbacks.CSVLogger("training_history.csv"),
         ],
         verbose=1,
     )
@@ -140,7 +170,19 @@ def train():
                 "inputs": {"beat": [int(X.shape[1]), 1], "rr_features": [3]},
                 "filter": {"lowcut_hz": 0.5, "highcut_hz": 40.0, "order": 4},
                 "excluded_records": ["102", "104", "107", "217"],
+                "grouping": "patient_group; records 201 and 202 are kept together",
+                "imbalance_strategy": IMBALANCE_STRATEGY,
+                "rr_features": [
+                    "pre_rr/local_median_rr",
+                    "post_rr/local_median_rr",
+                    "pre_rr/post_rr",
+                ],
                 "normalization": {"method": "training_global_zscore", "mean": mean, "std": std},
+                "rr_normalization": {
+                    "mean": rr_mean.tolist(),
+                    "std": rr_std.tolist(),
+                    "method": "training_only_zscore",
+                },
             },
             indent=2,
         ),

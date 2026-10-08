@@ -7,6 +7,8 @@ venv/
 
 # İndirilen büyük veri dosyalarını yükleme
 data/
+models/
+training_history.csv
 
 # Python derleme dosyaları
 __pycache__/

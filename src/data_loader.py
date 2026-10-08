@@ -38,3 +38,9 @@ AAMI_CLASSES = {
 # Standard inter-patient AAMI experiments commonly exclude paced records.
 EXCLUDED_RECORDS = frozenset({"102", "104", "107", "217"})
 CLASS_NAMES = ("Normal", "Supraventricular", "Ventricular", "Fusion")
+PATIENT_GROUPS = {"201": "patient_201_202", "202": "patient_201_202"}
+
+
+def patient_group(record_id):
+    """Return a patient-level group identifier for grouped evaluation."""
+    return PATIENT_GROUPS.get(str(record_id), f"patient_{record_id}")

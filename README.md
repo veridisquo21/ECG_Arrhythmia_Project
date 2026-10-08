@@ -29,11 +29,13 @@ python download_data.py
 python create_dataset.py
 python train_model.py
 python evaluate_model.py
+python evaluate_baselines.py
 ```
 
 The trained model is written to `models/ecg_model.keras` and its class metadata to `models/ecg_model.json`. The metadata records the filter, normalization, seed, inputs, and excluded records. To validate the simple peak detector against annotations:
 
 ```bash
+python evaluate_group_kfold.py
 python validate_detector.py
 ```
 
@@ -55,16 +57,21 @@ The demo intentionally displays `BPM: N/A`: a single 300-sample beat does not co
 
 - MIT-BIH record-disjoint evaluation is more realistic than beat-level random splitting, but it is not a clinical validation study.
 - Signals are standardized using mean and standard deviation computed from the training split only; no test statistics are used.
-- RR features are the previous RR, following RR, and local median RR in seconds.
+- RR features are normalized ratios of the previous and following intervals to a wider local median RR context; their final z-score uses training-only statistics.
 - The default peak detector is a transparent baseline. Run `validate_detector.py` before trusting it on a new record; `wfdb.processing.xqrs_detect` can be evaluated as a stronger alternative.
-- Results can vary with the available records and class distribution. Report macro-F1 and per-class recall, not accuracy alone.
+- The default training run uses class-weighted focal loss only. Oversampling and noise augmentation are not combined with focal weighting; these alternatives should be compared separately in an ablation study.
+- Run `evaluate_baselines.py` to compare majority, morphology-only, and RR-only baselines on the same held-out split.
+- Run `evaluate_group_kfold.py` to report patient-grouped five-fold baseline mean and standard deviation.
+- Results can vary with the available patient groups and class distribution. Report macro-F1 and per-class recall, not accuracy alone.
+- `training_history.csv` records loss, accuracy, and validation macro-F1 for plotting learning curves.
 
 ## Structure
 
 ```text
 create_dataset.py       Build labeled beats, RR features, and preserve record IDs
-train_model.py          Grouped split, train-only standardization, training, model export
+train_model.py          Patient-group split, train-only standardization, training, model export
 evaluate_model.py       Held-out test report and confusion matrix
+evaluate_baselines.py   Majority, morphology-only, and RR-only baselines
 validate_detector.py    Compare detected peaks with annotations
 download_data.py        Download MIT-BIH records
 advanced_monitor.py     Held-out beat visualization and prediction demo
